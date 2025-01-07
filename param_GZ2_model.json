@@ -1,0 +1,23 @@
+{
+    "verbose": true,
+    "no_train": true,
+    "test_model": true,
+    "batch_size": 48,
+    "n_epochs": 100,
+    "lr": 0.0001,
+    "n_steps": 1000,
+    "min_beta": 0.0001,
+    "max_beta": 0.02,
+    "nb_gal4training": 100,
+    "nb_gal2plot": 20,
+    "plot_subset": true,
+    "DDPM_dir": "/path/to/the/directory/DDPM",
+    "output_dir": "output",
+    "output_model": "model_DDPM_GalaxyZoo2.pt",
+    "DATALOCATION_DIR": "/path/to/the/data/GALAXYZOO2",
+    "ref_column_file": "gz2_hart16.csv",
+    "mapping_file": "gz2_filename_mapping.csv",
+    "carbon_estimation" : true,
+    "carbon_log_file" : "carbon_footprint.log",
+    "training_log_file" : "DDPM_galaxy_zoo2_training"
+}
