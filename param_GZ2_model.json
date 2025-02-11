@@ -23,5 +23,5 @@
     "plot_reconstruction": true,
     "save_freq" : 10,
     "plot_freq" : 10,
-    "val_freq" : 10,
+    "val_freq" : 10
 }

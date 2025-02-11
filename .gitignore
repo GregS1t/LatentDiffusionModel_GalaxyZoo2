@@ -1,0 +1,21 @@
+# .Gitignore file
+
+.DS_Store
+Icon*
+.ipynb_checkpoints/
+.dropbox
+*/__pycache__/*
+*.pyc
+stash/
+training_logs/
+tensorboard_logs/
+output/*.pt
+param_GZ2.json
+output/
+datasets/
+sampling.gif
+*.old
+*.png
+*.pth
+.vscode/
+model_DDPM*

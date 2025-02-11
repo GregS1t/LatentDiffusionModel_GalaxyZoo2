@@ -1,3 +1,18 @@
+
+# Purpose : Training of a Latent Diffusion Model (LDM) on the Galaxy Zoo 2 dataset.
+
+# The LDM is a generative model that learns to generate images by diffusing a latent space.
+# The model is trained on a subset of spiral galaxies from the Galaxy Zoo 2 dataset. 
+# The training is done in two steps:
+# 1. Training an autoencoder to learn a latent representation of the images.
+# 2. Training the Latent Diffusion Model (LDM) using the learned latent representation.
+# The LDM is trained to generate samples from the latent space and decode them into images.
+
+# Author: Grégory Sainton
+# Institution: Observatoire de Paris - PSL University
+# Date: 2025-01-06
+
+
 import os, sys
 import datetime
 import json
@@ -43,6 +58,7 @@ from libGalaxyZooDataset import *
 from libDDPM import *
 from libGPU_torch_utils import *
 from libAutoEncoder4LDM import *
+from libNoisePredictors import *
 from libLDM import *
 
 ## Side functions   
@@ -113,7 +129,7 @@ SEED = 42
 
 
 ## Parameters for training ###
-autoencoder_training = False
+autoencoder_training = True
 diffusion_model_training = True
 
 
@@ -466,7 +482,6 @@ if __name__ == '__main__':
             visualize_latent_space(latent_vectors_subset, labels_subset, epoch, 
                                 output_dir, strdate)
             
-
         if verbose:
             # After training
             print("Training complete! Plotting training and validation loss...")
@@ -483,7 +498,7 @@ if __name__ == '__main__':
                                         f"{strdate}_training_validation_loss.png"))
             plt.show()
             #plt.close()
-
+        print("AUTOENCODER: Training complete!")
 
     # --------------------------------------------------------------------------
     # TRAINING OF THE LATENT DIFFUSION MODEL
@@ -492,18 +507,18 @@ if __name__ == '__main__':
         print("\n"+"-"*50)
         print("Training the Latent Diffusion Model...")
         print("-"*50+"\n")
-        best_ae_path = os.path.join(output_dir, "20241128_084322_autoencoder_training_best_autoencoder.pth")
-
+        #best_ae_path = os.path.join(output_dir, "20241128_084322_autoencoder_training_best_autoencoder.pth")
+        best_ae_path = os.path.join(output_dir,
+                                        f"{strdate}_best_autoencoder.pth")
         # Chargement de l'autoencodeur pré-entraîné
         autoencoder = Autoencoder(latent_dim=latent_dim).to(device)
         autoencoder.load_state_dict(torch.load(best_ae_path, weights_only=True))
         autoencoder.eval()  # Mode évaluation pour éviter toute modification des poids
         print(f"Best autoencoder reloaded from file {best_ae_path}.")
-
         
+        # Version with simple feedforward neural network
         noise_predictor = NoisePredictor(latent_dim=latent_dim).to(device)
-
-        diffusion_model = LatentDiffusionModel(
+        diffusion_model_mlp = LatentDiffusionModel_MLP(
             network=noise_predictor,
             n_steps=n_steps,
             min_beta=min_beta,
@@ -511,6 +526,27 @@ if __name__ == '__main__':
             latent_dim=latent_dim,
             device=device
         )
+
+        # Version with U-net architecture
+        latent_channels = latent_dim
+        
+        unet_noise_predictor = UNetNoisePredictor(
+        in_channels=latent_channels,  # nombre de canaux en entrée
+        base_channels=64,             # vous pouvez ajuster
+        time_emb_dim=256,             # dimension de l'embedding du temps
+        out_channels=latent_channels  # pour que la sortie ait le même nombre de canaux
+        ).to(device)
+        
+        diffusion_model_w_unet = LatentDiffusionModel_UNET(
+            network=unet_noise_predictor,
+            n_steps=n_steps,
+            min_beta=min_beta,
+            max_beta=max_beta,
+            latent_dim=latent_dim,
+            device=device
+        )
+
+        diffusion_model = diffusion_model_w_unet
 
         optimizer_diffusion = torch.optim.Adam(diffusion_model.network.parameters(), lr=lr)
         scheduler_diffusion = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_diffusion, mode='min',
@@ -535,7 +571,6 @@ if __name__ == '__main__':
 
                 with torch.no_grad():  # L'autoencodeur n'est pas modifié
                     z_0 = autoencoder.encoder(x0)
-
 
                 t = torch.randint(0, n_steps, (z_0.size(0),), device=device)
                 with version_aware_autocast(device):
@@ -578,7 +613,7 @@ if __name__ == '__main__':
             # Save the model if the validation loss is the best so far
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-                torch.save(diffusion_model.state_dict(), os.path.join(output_dir, "LDM_diffusion_model_best.pth"))
+                torch.save(diffusion_model.state_dict(), os.path.join(output_dir, "LDM_UNET_diffusion_model_best.pth"))
                 print("Best model saved for validation loss: {:.4f}".format(val_loss) + " at epoch " + str(epoch + 1))
 
     print("LATENT DIFFUSION MODEL: Training complete!")
