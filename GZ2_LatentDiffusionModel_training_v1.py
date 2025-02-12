@@ -93,18 +93,28 @@ def version_aware_autocast(device):
 def visualize_latent_space(latent_vectors, labels, epoch, output_dir, strdate):
     """
     Visualizes the latent space using t-SNE.
-
+    Modified to take into account the UNet architecture.
     Args:
-        latent_vectors (np.array): Latent vectors from the encoder.
-        labels (list): Corresponding labels for each vector.
+        latent_vectors (np.array): Latent representations from the encoder.
+                                  Expected shape is either (N, C, H, W) for spatial latents
+                                  or (N, D) for flat vectors.
+        labels (list): Corresponding labels for each latent.
         epoch (int): Current epoch number (for saving).
         output_dir (str): Directory to save the plot.
         strdate (str): Timestamp string for filenames.
     """
-    
-    tsne = TSNE(n_components=2, random_state=42)
-    reduced_vectors = tsne.fit_transform(latent_vectors)
+    # If latent_vectors are spatial (4D), flatten them to 2D (N, C*H*W)
+    if latent_vectors.ndim == 4:
+        N, C, H, W = latent_vectors.shape
+        latent_vectors_flat = latent_vectors.reshape(N, C * H * W)
+    else:
+        latent_vectors_flat = latent_vectors
 
+    # Apply t-SNE for dimensionality reduction to 2D
+    tsne = TSNE(n_components=2, random_state=42)
+    reduced_vectors = tsne.fit_transform(latent_vectors_flat)
+
+    # Create a DataFrame for plotting
     df = pd.DataFrame({
         'x': reduced_vectors[:, 0],
         'y': reduced_vectors[:, 1],
@@ -129,7 +139,7 @@ SEED = 42
 
 
 ## Parameters for training ###
-autoencoder_training = True
+autoencoder_training = False
 diffusion_model_training = True
 
 
@@ -301,7 +311,12 @@ if __name__ == '__main__':
         print("\n"+"-"*50)
         print("Training the autoencoder...")
         print("-"*50+"\n")
-        autoencoder = Autoencoder(latent_dim=latent_dim).to(device)
+
+        latent_channels = 4
+        latent_shape = (latent_channels, 16, 16)
+
+        # Instantiate the autoencoder with the updated latent_channels.
+        autoencoder = Autoencoder(latent_channels=latent_channels).to(device)
 
         optimizer = torch.optim.AdamW(autoencoder.parameters(), lr=1e-4)
         
@@ -479,8 +494,8 @@ if __name__ == '__main__':
                 labels_subset = labels
 
             # Visualize latent space
-            visualize_latent_space(latent_vectors_subset, labels_subset, epoch, 
-                                output_dir, strdate)
+            #visualize_latent_space(latent_vectors_subset, labels_subset, epoch, 
+            #                    output_dir, strdate)
             
         if verbose:
             # After training
@@ -507,32 +522,37 @@ if __name__ == '__main__':
         print("\n"+"-"*50)
         print("Training the Latent Diffusion Model...")
         print("-"*50+"\n")
-        #best_ae_path = os.path.join(output_dir, "20241128_084322_autoencoder_training_best_autoencoder.pth")
-        best_ae_path = os.path.join(output_dir,
-                                        f"{strdate}_best_autoencoder.pth")
+        best_ae_path = os.path.join(output_dir,"20250212_173006_autoencoder_training_best_autoencoder.pth")
+        
+        latent_channels = 4
+        latent_shape = (latent_channels, 16, 16)
+
         # Chargement de l'autoencodeur pré-entraîné
-        autoencoder = Autoencoder(latent_dim=latent_dim).to(device)
+        autoencoder = Autoencoder(latent_channels=latent_channels).to(device)
         autoencoder.load_state_dict(torch.load(best_ae_path, weights_only=True))
         autoencoder.eval()  # Mode évaluation pour éviter toute modification des poids
         print(f"Best autoencoder reloaded from file {best_ae_path}.")
         
-        # Version with simple feedforward neural network
-        noise_predictor = NoisePredictor(latent_dim=latent_dim).to(device)
-        diffusion_model_mlp = LatentDiffusionModel_MLP(
-            network=noise_predictor,
-            n_steps=n_steps,
-            min_beta=min_beta,
-            max_beta=max_beta,
-            latent_dim=latent_dim,
-            device=device
-        )
+        # # Version with simple feedforward neural network
+        # noise_predictor = NoisePredictor(latent_dim=latent_dim).to(device)
+        # diffusion_model_mlp = LatentDiffusionModel_MLP(
+        #     network=noise_predictor,
+        #     n_steps=n_steps,
+        #     min_beta=min_beta,
+        #     max_beta=max_beta,
+        #     latent_dim=latent_dim,
+        #     device=device
+        # )
 
         # Version with U-net architecture
-        latent_channels = latent_dim
+        latent_channels = 4
+        latent_height = 16
+        latent_width = 16
+        latent_shape = (latent_channels, latent_height, latent_width)
         
         unet_noise_predictor = UNetNoisePredictor(
         in_channels=latent_channels,  # nombre de canaux en entrée
-        base_channels=64,             # vous pouvez ajuster
+        base_channels=64,             # nombre de canaux de la première couche
         time_emb_dim=256,             # dimension de l'embedding du temps
         out_channels=latent_channels  # pour que la sortie ait le même nombre de canaux
         ).to(device)
@@ -542,7 +562,7 @@ if __name__ == '__main__':
             n_steps=n_steps,
             min_beta=min_beta,
             max_beta=max_beta,
-            latent_dim=latent_dim,
+            latent_shape=latent_shape, # (4, 16, 16)
             device=device
         )
 
@@ -568,7 +588,7 @@ if __name__ == '__main__':
             
             for images in progress_bar:
                 x0 = images[0].to(device)
-
+                print("Shape of x0: ", x0.shape)
                 with torch.no_grad():  # L'autoencodeur n'est pas modifié
                     z_0 = autoencoder.encoder(x0)
 
@@ -582,11 +602,11 @@ if __name__ == '__main__':
                 scaler.update()
 
                 running_loss += loss.item() * z_0.size(0)
-                progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
+                progress_bar.set_postfix({"loss": f"{loss.item():.5f}"})
             
             epoch_loss = running_loss / len(train_loader.dataset)
-            tqdm.write(f"Epoch [{epoch+1}/{n_epochs_diffusion}], Training Loss: {epoch_loss:.4f}")
-            progress_bar.set_postfix({"Train loss": f"{epoch_loss:.4f}"})
+            tqdm.write(f"Epoch [{epoch+1}/{n_epochs_diffusion}], Training Loss: {epoch_loss:.5f}")
+            progress_bar.set_postfix({"Training loss": f"{epoch_loss:.5f}"})
 
             scheduler_diffusion.step(epoch_loss)
 
@@ -595,6 +615,7 @@ if __name__ == '__main__':
             with torch.no_grad():
                 for images in val_loader:
                     x0 = images[0].to(device)
+                    print("Shape of x0: ", x0.shape)    
                     z_0 = autoencoder.encoder(x0)
                     t = torch.randint(0, n_steps, (z_0.size(0),), device=device)
 
@@ -603,8 +624,8 @@ if __name__ == '__main__':
                     val_loss += loss.item() * z_0.size(0)
 
             val_loss /= len(val_loader.dataset)
-            tqdm.write(f"Epoch [{epoch+1}/{n_epochs_diffusion}], Validation Loss: {val_loss:.4f}")
-            progress_bar.set_postfix({"Val loss": f"{val_loss:.4f}"})
+            tqdm.write(f"Epoch [{epoch+1}/{n_epochs_diffusion}], Validation Loss: {val_loss:.5f}")
+            progress_bar.set_postfix({"Val loss": f"{val_loss:.5f}"})
 
             # Log the losses to TensorBoard
             writer.add_scalar("Loss/train", epoch_loss, epoch)
@@ -614,6 +635,6 @@ if __name__ == '__main__':
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 torch.save(diffusion_model.state_dict(), os.path.join(output_dir, "LDM_UNET_diffusion_model_best.pth"))
-                print("Best model saved for validation loss: {:.4f}".format(val_loss) + " at epoch " + str(epoch + 1))
+                print("Best model saved for validation loss: {:.5f}".format(val_loss) + " at epoch " + str(epoch + 1))
 
     print("LATENT DIFFUSION MODEL: Training complete!")
