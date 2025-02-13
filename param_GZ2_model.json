@@ -1,11 +1,12 @@
 {
     "verbose": true,
-    "no_train": true,
+    "train_aa": true,
+    "train_ldm": true,
     "test_model": true,
     "seed": 42,
     "batch_size": 64,
     "latent_dim": 512,
-    "n_epochs": 300,
+    "n_epochs": 30,
     "n_epochs_diffusion": 30,
     "lr": 0.00001,
     "n_steps": 1000,
@@ -23,5 +24,6 @@
     "plot_reconstruction": true,
     "save_freq" : 10,
     "plot_freq" : 10,
-    "val_freq" : 10
+    "val_freq" : 10,
+    "tensorboard_log": false
 }

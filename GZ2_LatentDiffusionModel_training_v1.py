@@ -85,7 +85,7 @@ def version_aware_autocast(device):
     Returns:
         autocast: Context manager for mixed precision training.
     """
-    if torch_version >= version.parse("2.5.0"):
+    if torch_version >= version.parse("1.10.0"):
         return autocast(device_type="cuda" if device == "cuda" else "cpu")
     else:
         return autocast()
@@ -138,11 +138,6 @@ parameters_file = 'param_GZ2.json'
 SEED = 42
 
 
-## Parameters for training ###
-autoencoder_training = False
-diffusion_model_training = True
-
-
 # ------------------------------------------------------------------------------
 # MAIN PROGRAM
 # ------------------------------------------------------------------------------
@@ -155,7 +150,8 @@ if __name__ == '__main__':
             parameters = json.load(json_file)
 
         # Now you can access the parameters using dictionary-style access
-        no_train = parameters['no_train']
+        train_aa = parameters['train_aa']
+        train_ldm = parameters['train_ldm']
         verbose = parameters['verbose']
         test_model = parameters['test_model']
         batch_size = parameters['batch_size']
@@ -175,15 +171,11 @@ if __name__ == '__main__':
         DATALOCATION_DIR = parameters['DATALOCATION_DIR']
         DDPM_dir = parameters['DDPM_dir']
         output_dir = parameters['output_dir']
-        plot_reconstruction = parameters['plot_reconstruction']        
+        plot_reconstruction = parameters['plot_reconstruction']
         save_freq = parameters['save_freq']
-        val_freq = parameters['val_freq'] 
-
-        # Carbon followup
-        carbon_estimation = parameters['carbon_estimation']
-        carbon_log_dir = parameters['carbon_log_dir']
-        carbon_log_file = parameters['carbon_log_file']
+        val_freq = parameters['val_freq']
         training_log_file = parameters['training_log_file']
+        tensorboard_log = parameters['tensorboard_log']
 
     else:
         print(f"File {parameters_file} does not exist !!!")
@@ -196,11 +188,11 @@ if __name__ == '__main__':
 
     mydevice = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     device = setup_device(mydevice)
-
-    if not os.path.exists('tensorboard_logs'):
-        os.makedirs('tensorboard_logs')
-    tensorboard_log_dir = os.path.join(DDPM_dir, 'tensorboard_logs_LDM')
-    writer = SummaryWriter(log_dir=tensorboard_log_dir)
+    if tensorboard_log:
+        if not os.path.exists('tensorboard_logs_LDM'):
+            os.makedirs('tensorboard_logs_LDM')
+        tensorboard_log_dir = os.path.join(DDPM_dir, 'tensorboard_logs_LDM')
+        writer = SummaryWriter(log_dir=tensorboard_log_dir)
 
     ### Load the data ###
     print("\n"+"-"*50)
@@ -307,7 +299,7 @@ if __name__ == '__main__':
     # TRAINING OF THE AUTOENCODER ITSELF
     # --------------------------------------------------------------------------
 
-    if autoencoder_training:
+    if train_aa:
         print("\n"+"-"*50)
         print("Training the autoencoder...")
         print("-"*50+"\n")
@@ -326,10 +318,23 @@ if __name__ == '__main__':
 
         # The following code block is used to handle mixed precision training
         # It could be put into a function to avoid code duplication TODO
-        if torch_version < version.parse("2.5.0"):
+        # if torch_version < version.parse("2.5.0"):
+        #     scaler = torch.amp.GradScaler(init_scale=65536.0, growth_interval=2000)
+        # else:
+        #     scaler = GradScaler()
+
+        ### PATCH ####
+        if torch_version >= version.parse("1.7.0"):
+            # Safe to use torch.amp.GradScaler
             scaler = torch.amp.GradScaler(init_scale=65536.0, growth_interval=2000)
+        elif torch_version >= version.parse("1.6.0"):
+            # Available only under torch.cuda.amp.GradScaler
+            scaler = torch.cuda.amp.GradScaler(init_scale=65536.0, growth_interval=2000)
         else:
-            scaler = GradScaler()
+            # GradScaler isn't available at all; must upgrade or skip AMP
+            scaler = None # No mixed precision training  
+
+
 
         num_epochs = n_epochs
         best_val_loss = float('inf')
@@ -374,7 +379,7 @@ if __name__ == '__main__':
                 running_loss += loss.item()
             
             avg_train_loss = running_loss / len(train_loader)
-            print(f"Epoch [{epoch+1}/{num_epochs}], Training Loss: {avg_train_loss:.4f}")
+            print(f"Epoch [{epoch+1}/{num_epochs}], Training Loss: {avg_train_loss:.6f}")
 
             # Estimate validation loss every `val_freq` epochs
             if (epoch + 1) % val_freq != 0: 
@@ -410,7 +415,7 @@ if __name__ == '__main__':
                         labels_list.extend(batch_labels)
 
                 avg_val_loss = val_loss / len(val_loader)
-                print(f"Epoch [{epoch+1}/{num_epochs}], Validation Loss: {avg_val_loss:.4f}")
+                print(f"Epoch [{epoch+1}/{num_epochs}], Validation Loss: {avg_val_loss:.6f}")
 
             # Plot reconstruction error distribution
             if plot_reconstruction:
@@ -494,7 +499,7 @@ if __name__ == '__main__':
                 labels_subset = labels
 
             # Visualize latent space
-            #visualize_latent_space(latent_vectors_subset, labels_subset, epoch, 
+            # visualize_latent_space(latent_vectors_subset, labels_subset, epoch, 
             #                    output_dir, strdate)
             
         if verbose:
@@ -518,7 +523,7 @@ if __name__ == '__main__':
     # --------------------------------------------------------------------------
     # TRAINING OF THE LATENT DIFFUSION MODEL
     # --------------------------------------------------------------------------
-    if diffusion_model_training:
+    if train_ldm:
         print("\n"+"-"*50)
         print("Training the Latent Diffusion Model...")
         print("-"*50+"\n")
@@ -572,10 +577,21 @@ if __name__ == '__main__':
         scheduler_diffusion = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_diffusion, mode='min',
                                                             patience=5, factor=0.5)
 
-        if torch_version < version.parse("2.5.0"):
+        # if torch_version < version.parse("2.5.0"):
+        #     scaler = torch.amp.GradScaler(init_scale=65536.0, growth_interval=2000)
+        # else:
+        #     scaler = GradScaler()
+        #### PATCH ####
+        if torch_version >= version.parse("1.7.0"):
+            # Safe to use torch.amp.GradScaler
             scaler = torch.amp.GradScaler(init_scale=65536.0, growth_interval=2000)
+        elif torch_version >= version.parse("1.6.0"):
+            # Available only under torch.cuda.amp.GradScaler
+            scaler = torch.cuda.amp.GradScaler(init_scale=65536.0, growth_interval=2000)
         else:
-            scaler = GradScaler()
+            # GradScaler isn't available at all; must upgrade or skip AMP
+            scaler = None # No mixed precision training  
+
 
         # Diffusion model training
         best_val_loss = float('inf')
@@ -605,8 +621,8 @@ if __name__ == '__main__':
                 progress_bar.set_postfix({"loss": f"{loss.item():.5f}"})
             
             epoch_loss = running_loss / len(train_loader.dataset)
-            tqdm.write(f"Epoch [{epoch+1}/{n_epochs_diffusion}], Training Loss: {epoch_loss:.5f}")
-            progress_bar.set_postfix({"Training loss": f"{epoch_loss:.5f}"})
+            tqdm.write(f"Epoch [{epoch+1}/{n_epochs_diffusion}], Training Loss: {epoch_loss:.6f}")
+            progress_bar.set_postfix({"Training loss": f"{epoch_loss:.6f}"})
 
             scheduler_diffusion.step(epoch_loss)
 
@@ -614,8 +630,7 @@ if __name__ == '__main__':
             val_loss = 0.0
             with torch.no_grad():
                 for images in val_loader:
-                    x0 = images[0].to(device)
-                    print("Shape of x0: ", x0.shape)    
+                    x0 = images[0].to(device)  
                     z_0 = autoencoder.encoder(x0)
                     t = torch.randint(0, n_steps, (z_0.size(0),), device=device)
 
@@ -624,12 +639,13 @@ if __name__ == '__main__':
                     val_loss += loss.item() * z_0.size(0)
 
             val_loss /= len(val_loader.dataset)
-            tqdm.write(f"Epoch [{epoch+1}/{n_epochs_diffusion}], Validation Loss: {val_loss:.5f}")
-            progress_bar.set_postfix({"Val loss": f"{val_loss:.5f}"})
+            tqdm.write(f"Epoch [{epoch+1}/{n_epochs_diffusion}], Validation Loss: {val_loss:.6f}")
+            progress_bar.set_postfix({"Val loss": f"{val_loss:.6f}"})
 
             # Log the losses to TensorBoard
-            writer.add_scalar("Loss/train", epoch_loss, epoch)
-            writer.add_scalar("Loss/val", val_loss, epoch)
+            if tensorboard_log:
+                writer.add_scalar("Loss/train", epoch_loss, epoch)
+                writer.add_scalar("Loss/val", val_loss, epoch)
 
             # Save the model if the validation loss is the best so far
             if val_loss < best_val_loss:
