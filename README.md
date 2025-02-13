@@ -46,7 +46,7 @@ You can also define the frequency to save plots and models during training.
 
 ## Applications
 
-This model has only been tested on the Galaxy Zoo 2 dataset. But 
+This model has only been tested on the Galaxy Zoo 2 dataset. But adapting the network, it's easy to use it on other dataset.
 
 
 ## Galaxy Zoo Dataset
